@@ -5,6 +5,15 @@ import * as anilist from "./sources/anilist.js";
 import { getImdbRating } from "./sources/imdb.js";
 import { searchNews } from "./sources/news.js";
 import { cached } from "./cache.js";
+import { cleanSynopsis, buildCaptionHtml } from "./format.js";
+
+// Only real seasons (TV) and movies count — OVA/ONA/specials/music are excluded.
+const SEASON_FORMATS = new Set(["TV", "TV_SHORT", "MOVIE"]);
+export function isSeasonOrMovie(format) {
+  if (!format) return false;
+  const f = String(format).toUpperCase().replace(/\s+/g, "_");
+  return f === "TV" || f === "TV_SHORT" || f === "MOVIE";
+}
 
 function fuzzyDate(d) {
   if (!d || !d.year) return null;
@@ -52,7 +61,12 @@ function buildSeasons(ani) {
   if (!ani?.relations?.edges) return [];
   const wanted = new Set(["PREQUEL", "SEQUEL", "PARENT", "SIDE_STORY"]);
   return ani.relations.edges
-    .filter((e) => wanted.has(e.relationType) && e.node?.type === "ANIME")
+    .filter(
+      (e) =>
+        wanted.has(e.relationType) &&
+        e.node?.type === "ANIME" &&
+        SEASON_FORMATS.has(e.node?.format)
+    )
     .map((e) => ({
       relation: e.relationType.toLowerCase(),
       malId: e.node.idMal || null,
@@ -161,22 +175,26 @@ async function buildManga(full) {
   }
 }
 
-/** Full aggregated details for a MAL anime id. */
-export async function getAnimeDetails(malId, { includeNews = true } = {}) {
-  return cached(`details:${malId}:${includeNews}`, 15 * 60 * 1000, async () => {
+/**
+ * Full aggregated details for a MAL anime id.
+ * `lite` skips the character/manga/news lookups (used for fast batch card
+ * generation) — it still returns everything needed for a card + caption.
+ */
+export async function getAnimeDetails(malId, { includeNews = true, lite = false } = {}) {
+  return cached(`details:${malId}:${includeNews}:${lite}`, 15 * 60 * 1000, async () => {
     const full = await jikan.getFull(malId);
     if (!full) return null;
 
     const [characters, ani] = await Promise.all([
-      jikan.getCharacters(malId).catch(() => []),
+      lite ? Promise.resolve([]) : jikan.getCharacters(malId).catch(() => []),
       anilist.byMalId(malId)
     ]);
 
     const title = full.title_english || full.title;
     const [imdb, manga, news] = await Promise.all([
       getImdbRating(title, full.year),
-      buildManga(full),
-      includeNews ? searchNews(`${title} anime`, 8) : Promise.resolve([])
+      lite ? Promise.resolve(null) : buildManga(full),
+      !lite && includeNews ? searchNews(`${title} anime`, 8) : Promise.resolve([])
     ]);
 
     const seasons = buildSeasons(ani);
@@ -190,7 +208,7 @@ export async function getAnimeDetails(malId, { includeNews = true } = {}) {
       ? { kind: "season", title: upcomingSeason.title, date: upcomingSeason.expectedDate?.iso || null, note: upcomingSeason.note }
       : null;
 
-    return {
+    const details = {
       malId: full.mal_id,
       anilistId: ani?.id || null,
       url: full.url,
@@ -200,7 +218,7 @@ export async function getAnimeDetails(malId, { includeNews = true } = {}) {
         japanese: full.title_japanese || null,
         synonyms: full.title_synonyms || []
       },
-      synopsis: full.synopsis || null,
+      synopsis: cleanSynopsis(full.synopsis) || null,
       background: full.background || null,
       type: full.type,
       source: full.source,
@@ -250,5 +268,9 @@ export async function getAnimeDetails(malId, { includeNews = true } = {}) {
       externalLinks: (ani?.externalLinks || []).map((l) => ({ site: l.site, url: l.url })),
       news
     };
+
+    // Telegram-ready HTML caption for the bot chat.
+    details.captionHtml = buildCaptionHtml(details);
+    return details;
   });
 }

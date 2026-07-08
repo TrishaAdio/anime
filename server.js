@@ -8,6 +8,8 @@ import { buildCard } from "./src/card.js";
 import { saveTemp, getTemp, remove, TTL_SECONDS } from "./src/cardstore.js";
 import { startKeepAlive } from "./src/keepalive.js";
 import { getSpeed, refreshIfStale, runSpeedTest, startSpeedMonitor } from "./src/speedtest.js";
+import { createSet, getSetPage } from "./src/set.js";
+import * as setstore from "./src/setstore.js";
 
 const app = express();
 app.set("trust proxy", true); // correct req.protocol behind Render's proxy
@@ -74,6 +76,11 @@ app.get("/", (_req, res) => {
       "GET /anime/:id/card?inline=true": "Return the AE-style image directly (no link).",
       "GET /anime/by-name/:name/card": "AE-style image for the best name match.",
       "GET /anime/by-name/:name": "Full details for the best match of a name.",
+      "GET /set?q=solo+leveling": "Pre-generate cards for all seasons+movies of a search (held 5 min).",
+      "GET /anime/by-name/:name/set": "Same as /set for a name path.",
+      "GET /set/:setId": "Set overview: all pages with status + card/data URLs.",
+      "GET /set/:setId/:page": "One page: details + Telegram captionHtml + card URL.",
+      "GET /set/:setId/:page/card": "The pre-generated card image for a page.",
       "GET /anime/:id/news": "Live news for the anime (searches the web).",
       "GET /anime/:id/characters": "Characters and voice actors (all languages).",
       "GET /news?q=one+piece": "Live anime news search.",
@@ -240,6 +247,105 @@ app.get("/download/:token", (req, res) => {
   const filename = (req.query.name && safeName(req.query.name)) || "anime-ae-card";
   res.download(path, `${filename}.png`, () => remove(req.params.token));
 });
+
+// ---- Pre-generated card set (all seasons/movies of a searched anime) ----
+
+function pageBrief(req, setId, p) {
+  return {
+    page: p.page,
+    malId: p.malId,
+    title: p.title,
+    type: p.type,
+    year: p.year,
+    status: p.status,
+    cardUrl: `${baseUrl(req)}/set/${setId}/${p.page}/card`,
+    dataUrl: `${baseUrl(req)}/set/${setId}/${p.page}`
+  };
+}
+
+function pageFull(req, setId, count, p) {
+  return {
+    setId,
+    page: p.page,
+    count,
+    malId: p.malId,
+    title: p.details ? p.details.title.english || p.details.title.default : p.title,
+    status: p.status,
+    cardUrl: `${baseUrl(req)}/set/${setId}/${p.page}/card`,
+    captionHtml: p.details ? p.details.captionHtml : null,
+    details: p.details || null
+  };
+}
+
+function setOverview(req, setId) {
+  const set = setstore.getSet(setId);
+  if (!set) return null;
+  return {
+    setId,
+    query: set.query,
+    count: set.pages.size,
+    expiresInSeconds: Math.max(0, Math.round((set.expiresAt - Date.now()) / 1000)),
+    pages: [...set.pages.values()].map((p) => pageBrief(req, setId, p))
+  };
+}
+
+async function respondNewSet(req, res, query) {
+  if (!query) return res.status(400).json({ error: "Missing search query" });
+  const created = await createSet(query);
+  if (!created) return res.status(404).json({ error: "No seasons or movies found for that search" });
+  const overview = setOverview(req, created.setId);
+  const first = await getSetPage(created.setId, 1);
+  overview.current = first ? pageFull(req, created.setId, created.count, first) : null;
+  res.json(overview);
+}
+
+app.get(
+  "/anime/by-name/:name/set",
+  asyncRoute((req, res) => respondNewSet(req, res, req.params.name))
+);
+
+app.get(
+  "/set",
+  asyncRoute((req, res) => respondNewSet(req, res, (req.query.q || "").toString().trim()))
+);
+
+app.get(
+  "/set/:setId",
+  asyncRoute((req, res) => {
+    const overview = setOverview(req, req.params.setId);
+    if (!overview) {
+      return res.status(410).json({ error: "Set expired or not found. Sets are kept for 5 minutes." });
+    }
+    res.json(overview);
+  })
+);
+
+app.get(
+  "/set/:setId/:page",
+  asyncRoute(async (req, res) => {
+    const set = setstore.getSet(req.params.setId);
+    if (!set) {
+      return res.status(410).json({ error: "Set expired or not found. Sets are kept for 5 minutes." });
+    }
+    const p = await getSetPage(req.params.setId, req.params.page);
+    if (!p) return res.status(404).json({ error: "Page not found" });
+    res.json(pageFull(req, req.params.setId, set.pages.size, p));
+  })
+);
+
+app.get(
+  "/set/:setId/:page/card",
+  asyncRoute(async (req, res) => {
+    const set = setstore.getSet(req.params.setId);
+    if (!set) return res.status(410).json({ error: "Set expired. Sets are kept for 5 minutes." });
+    await getSetPage(req.params.setId, req.params.page);
+    const file = setstore.cardFileFor(req.params.setId, req.params.page);
+    if (!file) return res.status(404).json({ error: "Card not available for this page" });
+    res.type("png");
+    res.setHeader("Cache-Control", "no-store");
+    res.sendFile(file);
+  })
+);
 
 app.get(
   "/news",
