@@ -5,6 +5,7 @@ import { searchNews } from "./src/sources/news.js";
 import { getAnimeDetails } from "./src/aggregate.js";
 import { buildCard } from "./src/card.js";
 import { saveTemp, getTemp, remove, TTL_SECONDS } from "./src/cardstore.js";
+import { startKeepAlive } from "./src/keepalive.js";
 
 const app = express();
 app.set("trust proxy", true); // correct req.protocol behind Render's proxy
@@ -225,4 +226,7 @@ app.get(
 
 app.use((_req, res) => res.status(404).json({ error: "Not found" }));
 
-app.listen(PORT, () => console.log(`Anime Details API listening on port ${PORT}`));
+app.listen(PORT, () => {
+  console.log(`Anime Details API listening on port ${PORT}`);
+  startKeepAlive();
+});

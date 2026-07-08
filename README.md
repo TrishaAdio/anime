@@ -94,7 +94,19 @@ It returns a **temporary download link** that is valid for **60 seconds**:
 - Use `?inline=true` to get the PNG directly without the link/expiry flow.
 
 Rendering uses `@napi-rs/canvas` (prebuilt binaries — no system libraries needed
-on Render) with the bundled Poppins font (`assets/fonts`).
+on Render) with the bundled Poppins font (`assets/fonts`). Cards are branded
+**@YorManagerXBot**.
+
+## Staying awake on Render free tier
+
+Render free web services sleep after ~15 minutes without inbound traffic. This
+app includes a keep-alive that self-pings its own public URL every 12 minutes
+(using the `RENDER_EXTERNAL_URL` that Render injects automatically), so it stays
+up continuously. It is a no-op locally.
+
+- Configure the interval with `KEEPALIVE_MINUTES` (default `12`).
+- Note: a single always-on free service uses roughly the whole monthly free
+  instance-hour allowance, so it stays up until that free-tier limit resets.
 
 ## Notes
 
