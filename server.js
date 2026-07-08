@@ -250,12 +250,17 @@ app.get("/download/:token", (req, res) => {
 
 // ---- Pre-generated card set (all seasons/movies of a searched anime) ----
 
+function pageKind(type) {
+  return String(type || "").toUpperCase().replace(/\s+/g, "_") === "MOVIE" ? "movie" : "season";
+}
+
 function pageBrief(req, setId, p) {
   return {
     page: p.page,
     malId: p.malId,
     title: p.title,
     type: p.type,
+    kind: pageKind(p.type),
     year: p.year,
     status: p.status,
     cardUrl: `${baseUrl(req)}/set/${setId}/${p.page}/card`,
@@ -279,12 +284,16 @@ function pageFull(req, setId, count, p) {
 function setOverview(req, setId) {
   const set = setstore.getSet(setId);
   if (!set) return null;
+  const pages = [...set.pages.values()].map((p) => pageBrief(req, setId, p));
   return {
     setId,
     query: set.query,
     count: set.pages.size,
     expiresInSeconds: Math.max(0, Math.round((set.expiresAt - Date.now()) / 1000)),
-    pages: [...set.pages.values()].map((p) => pageBrief(req, setId, p))
+    // Grouped for the bot's "Seasons" / "Movies" headings.
+    seasons: pages.filter((p) => p.kind === "season"),
+    movies: pages.filter((p) => p.kind === "movie"),
+    pages
   };
 }
 
