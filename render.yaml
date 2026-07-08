@@ -1,0 +1,9 @@
+services:
+  - type: web
+    name: anime-details-api
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /health
+    autoDeploy: true

@@ -1,0 +1,19 @@
+{
+  "name": "anime-details-api",
+  "version": "1.0.0",
+  "description": "Comprehensive anime details API aggregating MyAnimeList (Jikan), AniList, IMDb (open web) and live news.",
+  "main": "server.js",
+  "type": "module",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "dependencies": {
+    "@napi-rs/canvas": "^1.0.2",
+    "express": "^4.19.2"
+  },
+  "license": "MIT"
+}
