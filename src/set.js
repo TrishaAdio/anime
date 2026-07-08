@@ -18,56 +18,77 @@ const inflight = new Map(); // `${setId}:${page}` -> Promise
 
 const norm = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9]/g, "");
 
-// Is this search hit part of the same franchise as the query/anchor?
-function isRelevant(entry, q) {
-  const t = norm(entry.title_english || entry.title);
-  const t2 = norm(entry.title);
-  return t.includes(q) || q.includes(t) || t2.includes(q) || q.includes(t2);
-}
+// Relation types that make up a franchise's *watchable* line-up.
+//  - MAIN: real seasons; we follow these to discover the whole chain.
+//  - LEAF: real side movies/series; included but not traversed further.
+// Everything else (ALTERNATIVE, SUMMARY, COMPILATION, SPIN_OFF, CHARACTER,
+// OTHER, ...) is skipped — that's where recaps/compilations live.
+const MAIN_REL = new Set(["PREQUEL", "SEQUEL", "PARENT"]);
+const LEAF_REL = new Set(["SIDE_STORY"]);
+const MAX_CALLS = 16;
 
-// The searched anime's own seasons/movies, from AniList relations.
-async function franchiseRelations(malId) {
-  const media = await anilist.byMalId(malId).catch(() => null);
-  if (!media?.relations?.edges) return [];
-  const wanted = new Set(["PREQUEL", "SEQUEL", "PARENT", "SIDE_STORY"]);
-  return media.relations.edges
-    .filter(
-      (e) =>
-        wanted.has(e.relationType) &&
-        e.node?.type === "ANIME" &&
-        isSeasonOrMovie(e.node?.format) &&
-        e.node?.idMal
-    )
-    .map((e) => ({
-      mal_id: e.node.idMal,
-      title: e.node.title?.romaji || null,
-      title_english: e.node.title?.english || null,
-      type: e.node.format,
-      year: e.node.startDate?.year || null
-    }));
-}
+const edgeToEntry = (n) => ({
+  mal_id: n.idMal,
+  title: n.title?.romaji || null,
+  title_english: n.title?.english || null,
+  type: n.format,
+  year: n.startDate?.year || null
+});
 
-// Build the ordered list of franchise entries (seasons + movies only).
-async function buildEntries(query, results) {
-  const q = norm(query);
-  const anchor = results.find((r) => isSeasonOrMovie(r.type)) || results[0];
-
-  // Relevant search hits (share the franchise name) that are seasons/movies.
-  const relevant = results.filter((r) => r.mal_id && isSeasonOrMovie(r.type) && isRelevant(r, q));
-
-  // Enrich with the anchor's own related seasons/movies (catches differently
-  // named sequels/movies that the text search missed).
-  const related = anchor?.mal_id ? await franchiseRelations(anchor.mal_id) : [];
-
-  const byId = new Map();
+// Walk AniList's relation graph from the anchor and collect only real
+// seasons + side movies (no recaps/compilations/spin-offs).
+async function walkFranchise(anchor) {
+  const collected = new Map();
   const add = (e) => {
-    if (e?.mal_id && !byId.has(e.mal_id)) byId.set(e.mal_id, e);
+    if (e?.mal_id && isSeasonOrMovie(e.type) && !collected.has(e.mal_id)) collected.set(e.mal_id, e);
   };
-  if (anchor && isSeasonOrMovie(anchor.type)) add(anchor);
-  relevant.forEach(add);
-  related.forEach(add);
+  add(anchor);
 
-  const entries = [...byId.values()];
+  const visited = new Set();
+  const queue = [anchor.mal_id];
+  let calls = 0;
+
+  while (queue.length && calls < MAX_CALLS) {
+    const id = queue.shift();
+    if (!id || visited.has(id)) continue;
+    visited.add(id);
+
+    const media = await anilist.byMalId(id).catch(() => null);
+    calls++;
+    if (!media?.relations?.edges) continue;
+
+    for (const e of media.relations.edges) {
+      const n = e.node;
+      if (n?.type !== "ANIME" || !n.idMal) continue;
+      if (MAIN_REL.has(e.relationType)) {
+        add(edgeToEntry(n));
+        if (!visited.has(n.idMal)) queue.push(n.idMal); // continue the chain
+      } else if (LEAF_REL.has(e.relationType)) {
+        add(edgeToEntry(n)); // real side movie/series, don't traverse
+      }
+    }
+  }
+
+  return [...collected.values()];
+}
+
+// Build the ordered list of franchise entries (real seasons + movies only).
+async function buildEntries(query, results) {
+  // Anchor: prefer a TV entry, else any season/movie, else the top hit.
+  const anchor =
+    results.find((r) => String(r.type).toUpperCase() === "TV") ||
+    results.find((r) => isSeasonOrMovie(r.type)) ||
+    results[0];
+  if (!anchor?.mal_id) return [];
+
+  let entries = await walkFranchise(anchor);
+
+  // Fallback: if the relation graph gave us nothing usable, at least return the
+  // season/movie search hits so a set is never empty.
+  if (entries.length === 0) {
+    entries = results.filter((r) => r.mal_id && isSeasonOrMovie(r.type));
+  }
+
   entries.sort((a, b) => {
     const ay = a.year || 9999;
     const by = b.year || 9999;
