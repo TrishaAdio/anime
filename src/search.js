@@ -1,15 +1,20 @@
-// Shared anime search: Jikan first (flaky, so retried inside), then AniList as
-// a fast, reliable fallback. Both return Jikan-shaped summaries.
+// Shared anime search. AniList first: it's fast, reliable, and returns the MAL
+// id + format directly. Jikan is the fallback (its search endpoint is flaky and
+// its retry/backoff can add many seconds). Both return Jikan-shaped summaries.
 
 import * as jikan from "./sources/jikan.js";
 import * as anilist from "./sources/anilist.js";
 
 export async function searchAnime(query, limit = 10) {
   try {
-    const results = await jikan.searchAnime(query, limit);
+    const results = await anilist.searchAnime(query, limit);
     if (results.length) return results;
   } catch {
-    /* fall through to AniList */
+    /* fall through to Jikan */
   }
-  return anilist.searchAnime(query, limit);
+  try {
+    return await jikan.searchAnime(query, limit);
+  } catch {
+    return [];
+  }
 }

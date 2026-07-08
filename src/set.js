@@ -14,6 +14,8 @@ import { buildCard } from "./card.js";
 import * as store from "./setstore.js";
 
 const MAX_PAGES = 12;
+const MAX_CALLS = 12; // cap AniList relation lookups
+const WALK_BUDGET_MS = 11000; // hard time budget for the whole graph walk
 const inflight = new Map(); // `${setId}:${page}` -> Promise
 
 const norm = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9]/g, "");
@@ -25,7 +27,6 @@ const norm = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9]/g, "");
 // OTHER, ...) is skipped — that's where recaps/compilations live.
 const MAIN_REL = new Set(["PREQUEL", "SEQUEL", "PARENT"]);
 const LEAF_REL = new Set(["SIDE_STORY"]);
-const MAX_CALLS = 16;
 
 const edgeToEntry = (n) => ({
   mal_id: n.idMal,
@@ -47,13 +48,15 @@ async function walkFranchise(anchor) {
   const visited = new Set();
   const queue = [anchor.mal_id];
   let calls = 0;
+  const deadline = Date.now() + WALK_BUDGET_MS;
 
-  while (queue.length && calls < MAX_CALLS) {
+  while (queue.length && calls < MAX_CALLS && Date.now() < deadline) {
     const id = queue.shift();
     if (!id || visited.has(id)) continue;
     visited.add(id);
 
-    const media = await anilist.byMalId(id).catch(() => null);
+    // Short per-call budget so one throttled AniList request can't stall the set.
+    const media = await anilist.byMalId(id, { attempts: 2, timeout: 6000 }).catch(() => null);
     calls++;
     if (!media?.relations?.edges) continue;
 

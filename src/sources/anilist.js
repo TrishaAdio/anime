@@ -10,15 +10,15 @@ const RETRYABLE = new Set([429, 500, 502, 503, 504]);
 
 // AniList rate-limits aggressively (429). Retry a few times with short backoff
 // so transient bursts recover; give up quickly rather than blocking the request.
-async function query(payload, attempts = 3) {
+async function query(payload, { attempts = 3, timeout = 12000 } = {}) {
   let lastErr;
   for (let i = 0; i < attempts; i++) {
     try {
-      return await postJSON(ENDPOINT, payload, { timeout: 12000 });
+      return await postJSON(ENDPOINT, payload, { timeout });
     } catch (err) {
       lastErr = err;
       if ((err.status && !RETRYABLE.has(err.status)) || i === attempts - 1) throw err;
-      await new Promise((r) => setTimeout(r, 700 * 2 ** i)); // 700ms, 1.4s
+      await new Promise((r) => setTimeout(r, 500 * 2 ** i)); // 500ms, 1s
     }
   }
   throw lastErr;
@@ -103,14 +103,14 @@ export async function searchAnime(search, perPage = 10) {
     }));
 }
 
-export async function byMalId(idMal) {
+export async function byMalId(idMal, opts = {}) {
   const key = `anilist:${idMal}`;
   try {
     return await cached(key, 30 * 60 * 1000, async () => {
-      const json = await query({
-        query: MEDIA_QUERY,
-        variables: { idMal: Number(idMal) }
-      });
+      const json = await query(
+        { query: MEDIA_QUERY, variables: { idMal: Number(idMal) } },
+        opts
+      );
       return json?.data?.Media || null;
     });
   } catch {
