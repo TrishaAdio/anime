@@ -3,9 +3,11 @@ import * as jikan from "./src/sources/jikan.js";
 import * as anilist from "./src/sources/anilist.js";
 import { searchNews } from "./src/sources/news.js";
 import { getAnimeDetails } from "./src/aggregate.js";
+import os from "node:os";
 import { buildCard } from "./src/card.js";
 import { saveTemp, getTemp, remove, TTL_SECONDS } from "./src/cardstore.js";
 import { startKeepAlive } from "./src/keepalive.js";
+import { getSpeed, refreshIfStale, runSpeedTest, startSpeedMonitor } from "./src/speedtest.js";
 
 const app = express();
 app.set("trust proxy", true); // correct req.protocol behind Render's proxy
@@ -82,7 +84,48 @@ app.get("/", (_req, res) => {
   });
 });
 
-app.get("/health", (_req, res) => res.json({ status: "ok", uptime: process.uptime() }));
+const MB = 1024 * 1024;
+
+app.get(
+  "/health",
+  asyncRoute(async (req, res) => {
+    // ?speedtest=live forces a fresh (blocking) measurement; otherwise the
+    // cached background result is returned instantly and refreshed if stale.
+    if (req.query.speedtest === "live") {
+      await runSpeedTest();
+    } else {
+      refreshIfStale();
+    }
+
+    const cpus = os.cpus();
+    const mem = process.memoryUsage();
+
+    res.json({
+      status: "ok",
+      uptimeSeconds: Math.round(process.uptime()),
+      timestamp: new Date().toISOString(),
+      system: {
+        platform: os.platform(),
+        arch: os.arch(),
+        nodeVersion: process.version,
+        hostname: os.hostname(),
+        cpu: {
+          model: cpus[0]?.model?.trim() || "unknown",
+          cores: cpus.length,
+          loadAverage: os.loadavg().map((n) => Math.round(n * 100) / 100)
+        },
+        memory: {
+          totalMB: Math.round(os.totalmem() / MB),
+          freeMB: Math.round(os.freemem() / MB),
+          usedMB: Math.round((os.totalmem() - os.freemem()) / MB),
+          processRssMB: Math.round(mem.rss / MB)
+        },
+        osUptimeSeconds: Math.round(os.uptime())
+      },
+      network: getSpeed()
+    });
+  })
+);
 
 app.get(
   "/search",
@@ -229,4 +272,5 @@ app.use((_req, res) => res.status(404).json({ error: "Not found" }));
 app.listen(PORT, () => {
   console.log(`Anime Details API listening on port ${PORT}`);
   startKeepAlive();
+  startSpeedMonitor();
 });

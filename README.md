@@ -43,7 +43,8 @@ A comprehensive anime API that returns **everything about an anime** in one call
 | GET | `/news?q=one+piece` | Live anime news search |
 | GET | `/seasons/now` | Airing this season |
 | GET | `/seasons/upcoming` | Upcoming anime |
-| GET | `/health` | Health check |
+| GET | `/health` | Status + system specs (CPU, memory, load, uptime) + internet speed |
+| GET | `/health?speedtest=live` | Same, but forces a fresh live speed measurement |
 
 ### Example
 
@@ -96,6 +97,29 @@ It returns a **temporary download link** that is valid for **60 seconds**:
 Rendering uses `@napi-rs/canvas` (prebuilt binaries — no system libraries needed
 on Render) with the bundled Poppins font (`assets/fonts`). Cards are branded
 **@YorManagerXBot**.
+
+## Health & system metrics
+
+`GET /health` returns service status plus live host metrics and internet speed:
+
+```json
+{
+  "status": "ok",
+  "uptimeSeconds": 1234,
+  "system": {
+    "platform": "linux", "arch": "x64", "nodeVersion": "v22.x",
+    "cpu": { "model": "Intel(R) Xeon(R) ...", "cores": 8, "loadAverage": [0.2, 0.3, 0.2] },
+    "memory": { "totalMB": 512, "freeMB": 210, "usedMB": 302, "processRssMB": 120 },
+    "osUptimeSeconds": 4686
+  },
+  "network": { "provider": "Cloudflare", "pingMs": 40, "downloadMbps": 846, "uploadMbps": 168, "testedAt": "...", "ageSeconds": 12, "status": "ok" }
+}
+```
+
+The speed test (Cloudflare's public endpoints) runs in the background at startup
+and refreshes when the cached result is older than 15 minutes, so `/health`
+responds instantly and never blocks Render's health check. Add `?speedtest=live`
+to force a fresh measurement.
 
 ## Staying awake on Render free tier
 
