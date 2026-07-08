@@ -9,6 +9,35 @@ import { cleanSynopsis } from "./format.js";
 
 // Only real seasons (TV) and movies count — OVA/ONA/specials/music are excluded.
 const SEASON_FORMATS = new Set(["TV", "TV_SHORT", "MOVIE"]);
+
+// MAL often gives sequel seasons a placeholder synopsis like
+// "Third season of X." Treat very short blurbs as stubs.
+function isStubSynopsis(s) {
+  return !s || s.trim().length < 130;
+}
+
+// When a season's synopsis is a stub, borrow the real story from the nearest
+// prequel/parent that actually has one.
+async function resolveSynopsis(full, ani, depth = 0) {
+  const own = cleanSynopsis(full?.synopsis);
+  if (!isStubSynopsis(own) || depth >= 4) return own;
+
+  const edges = ani?.relations?.edges || [];
+  const parent =
+    edges.find((e) => e.relationType === "PREQUEL" && e.node?.type === "ANIME" && e.node?.idMal) ||
+    edges.find((e) => e.relationType === "PARENT" && e.node?.type === "ANIME" && e.node?.idMal);
+  if (!parent) return own;
+
+  const pid = parent.node.idMal;
+  const [pFull, pAni] = await Promise.all([
+    jikan.getFull(pid).catch(() => null),
+    anilist.byMalId(pid).catch(() => null)
+  ]);
+  if (!pFull) return own;
+
+  const inherited = await resolveSynopsis(pFull, pAni, depth + 1);
+  return isStubSynopsis(inherited) ? own : inherited;
+}
 export function isSeasonOrMovie(format) {
   if (!format) return false;
   const f = String(format).toUpperCase().replace(/\s+/g, "_");
@@ -197,6 +226,8 @@ export async function getAnimeDetails(malId, { includeNews = true, lite = false 
       !lite && includeNews ? searchNews(`${title} anime`, 8) : Promise.resolve([])
     ]);
 
+    const synopsis = await resolveSynopsis(full, ani);
+
     const seasons = buildSeasons(ani);
     const upcomingSeason = findUpcomingSeason(seasons);
     const nextEpisode = nextEpisodeInfo(ani);
@@ -218,7 +249,7 @@ export async function getAnimeDetails(malId, { includeNews = true, lite = false 
         japanese: full.title_japanese || null,
         synonyms: full.title_synonyms || []
       },
-      synopsis: cleanSynopsis(full.synopsis) || null,
+      synopsis: synopsis || null,
       background: full.background || null,
       type: full.type,
       source: full.source,
