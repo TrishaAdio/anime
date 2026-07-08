@@ -6,6 +6,23 @@ import { postJSON } from "../http.js";
 import { cached } from "../cache.js";
 
 const ENDPOINT = "https://graphql.anilist.co";
+const RETRYABLE = new Set([429, 500, 502, 503, 504]);
+
+// AniList rate-limits aggressively (429). Retry a few times with short backoff
+// so transient bursts recover; give up quickly rather than blocking the request.
+async function query(payload, attempts = 3) {
+  let lastErr;
+  for (let i = 0; i < attempts; i++) {
+    try {
+      return await postJSON(ENDPOINT, payload, { timeout: 12000 });
+    } catch (err) {
+      lastErr = err;
+      if ((err.status && !RETRYABLE.has(err.status)) || i === attempts - 1) throw err;
+      await new Promise((r) => setTimeout(r, 700 * 2 ** i)); // 700ms, 1.4s
+    }
+  }
+  throw lastErr;
+}
 
 const MEDIA_QUERY = `
 query ($idMal: Int) {
@@ -63,10 +80,10 @@ query ($search: String, $perPage: Int) {
 // Search anime on AniList. Returns entries shaped like Jikan's summary so the
 // server can treat both sources the same way. Used as a fallback when Jikan's
 // (flaky) search endpoint times out.
-export async function searchAnime(query, perPage = 10) {
-  const json = await postJSON(ENDPOINT, {
+export async function searchAnime(search, perPage = 10) {
+  const json = await query({
     query: SEARCH_QUERY,
-    variables: { search: query, perPage }
+    variables: { search, perPage }
   });
   const media = json?.data?.Page?.media || [];
   return media
@@ -90,7 +107,7 @@ export async function byMalId(idMal) {
   const key = `anilist:${idMal}`;
   try {
     return await cached(key, 30 * 60 * 1000, async () => {
-      const json = await postJSON(ENDPOINT, {
+      const json = await query({
         query: MEDIA_QUERY,
         variables: { idMal: Number(idMal) }
       });
