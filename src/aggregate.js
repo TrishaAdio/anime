@@ -5,7 +5,7 @@ import * as anilist from "./sources/anilist.js";
 import { getImdbRating } from "./sources/imdb.js";
 import { searchNews } from "./sources/news.js";
 import { cached } from "./cache.js";
-import { cleanSynopsis, buildCaptionHtml } from "./format.js";
+import { cleanSynopsis } from "./format.js";
 
 // Only real seasons (TV) and movies count — OVA/ONA/specials/music are excluded.
 const SEASON_FORMATS = new Set(["TV", "TV_SHORT", "MOVIE"]);
@@ -269,8 +269,6 @@ export async function getAnimeDetails(malId, { includeNews = true, lite = false 
       news
     };
 
-    // Telegram-ready HTML caption for the bot chat.
-    details.captionHtml = buildCaptionHtml(details);
     return details;
   });
 }

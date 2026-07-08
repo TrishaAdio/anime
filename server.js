@@ -79,7 +79,7 @@ app.get("/", (_req, res) => {
       "GET /set?q=solo+leveling": "Pre-generate cards for all seasons+movies of a search (held 5 min).",
       "GET /anime/by-name/:name/set": "Same as /set for a name path.",
       "GET /set/:setId": "Set overview: all pages with status + card/data URLs.",
-      "GET /set/:setId/:page": "One page: details + Telegram captionHtml + card URL.",
+      "GET /set/:setId/:page": "One page: details + card URL.",
       "GET /set/:setId/:page/card": "The pre-generated card image for a page.",
       "GET /anime/:id/news": "Live news for the anime (searches the web).",
       "GET /anime/:id/characters": "Characters and voice actors (all languages).",
@@ -272,7 +272,6 @@ function pageFull(req, setId, count, p) {
     title: p.details ? p.details.title.english || p.details.title.default : p.title,
     status: p.status,
     cardUrl: `${baseUrl(req)}/set/${setId}/${p.page}/card`,
-    captionHtml: p.details ? p.details.captionHtml : null,
     details: p.details || null
   };
 }
