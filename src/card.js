@@ -107,6 +107,44 @@ function wrapText(ctx, text, maxWidth, maxLines) {
   return lines;
 }
 
+// Wrap into as many lines as needed (no truncation).
+function wrapLines(ctx, text, maxWidth) {
+  const words = String(text).split(/\s+/);
+  const lines = [];
+  let line = "";
+  for (const w of words) {
+    const test = line ? `${line} ${w}` : w;
+    if (ctx.measureText(test).width > maxWidth && line) {
+      lines.push(line);
+      line = w;
+    } else {
+      line = test;
+    }
+  }
+  if (line) lines.push(line);
+  return lines;
+}
+
+// Pick the largest title font that fits within a sensible line budget so long
+// titles don't blow up the layout (and push text into the footer).
+function fitTitle(ctx, text, maxWidth) {
+  const tries = [
+    [78, 2],
+    [70, 2],
+    [62, 2],
+    [58, 3],
+    [52, 3],
+    [46, 3]
+  ];
+  for (const [size, maxLines] of tries) {
+    ctx.font = `800 ${size}px PoppinsX`;
+    const lines = wrapLines(ctx, text, maxWidth);
+    if (lines.length <= maxLines) return { size, lines, lineHeight: Math.round(size * 1.06) };
+  }
+  ctx.font = "800 44px PoppinsX";
+  return { size: 44, lines: wrapText(ctx, text, maxWidth, 3), lineHeight: 48 };
+}
+
 function pill(ctx, x, y, label, accent, opts = {}) {
   ctx.font = "600 24px PoppinsS";
   const padX = 20;
@@ -279,80 +317,118 @@ export async function buildCard(a) {
     ctx.restore();
   }
 
-  // ---- Left text column ----
+  // ---- Left text column (measured + vertically centred, clear of footer) ----
   const x = 76;
-  let y = 148;
-  const textMax = px - x - 64;
+  const textMax = px - x - 56;
+  const footerY = H - 46;
+  const safeBottom = footerY - 40; // text must never cross into this zone
+
+  const kicker = [a.type, a.year, (a.status || "").toUpperCase()]
+    .filter(Boolean)
+    .join("   •   ")
+    .toUpperCase();
+  const titleText = a.title?.english || a.title?.default || "Unknown";
+  const fit = fitTitle(ctx, titleText, textMax);
+  const secondary = a.title?.default && a.title.default !== titleText ? a.title.default : null;
+
+  const mal = a.ratings?.mal?.score;
+  const imdb = a.ratings?.imdb?.rating;
+  const anilistScore = a.ratings?.anilist?.averageScore;
+  const hasPills = Boolean(mal || imdb || anilistScore || a.episodes);
+  const genres = (a.genres || []).slice(0, 4);
+  const nr = a.expectedNextRelease;
+
+  const KICKER_H = 30;
+  const UNDER_GAP = 12;
+  const UNDER_H = 6;
+  const TITLE_GAP = 26;
+  const SUB_GAP = 16;
+  const SUB_H = 34;
+  const PILLS_GAP = 26;
+  const PILL_H = 46;
+  const GENRE_GAP = 16;
+  const NEXT_GAP = 20;
+  const NEXT_H = 28;
+
+  let blockH = KICKER_H + UNDER_GAP + UNDER_H + TITLE_GAP + fit.lines.length * fit.lineHeight;
+  if (secondary) blockH += SUB_GAP + SUB_H;
+  if (hasPills) blockH += PILLS_GAP + PILL_H;
+  if (genres.length) blockH += GENRE_GAP + PILL_H;
+  if (nr) blockH += NEXT_GAP + NEXT_H;
+
+  // Vertically centre the block, but never let it cross the footer safe zone.
+  let y = Math.round((H - blockH) / 2);
+  if (y + blockH > safeBottom) y = safeBottom - blockH;
+  if (y < 108) y = 108;
+
+  ctx.textBaseline = "top";
 
   // Kicker.
-  const kicker = [a.type, a.year, (a.status || "").toUpperCase()].filter(Boolean).join("   •   ");
   ctx.font = "600 26px PoppinsS";
-  ctx.textBaseline = "alphabetic";
   ctx.fillStyle = rgba(lighten(accent, 0.35), 1);
-  ctx.fillText(kicker.toUpperCase(), x, y);
-  y += 24;
+  ctx.fillText(kicker, x, y);
+  y += KICKER_H;
 
   // Accent underline (gradient).
+  y += UNDER_GAP;
   const ug = ctx.createLinearGradient(x, 0, x + 90, 0);
   ug.addColorStop(0, rgba(lighten(accent, 0.3), 1));
   ug.addColorStop(1, rgba(accent2, 1));
   ctx.fillStyle = ug;
-  roundRect(ctx, x, y, 90, 6, 3);
+  roundRect(ctx, x, y, 90, UNDER_H, 3);
   ctx.fill();
-  y += 50;
+  y += UNDER_H + TITLE_GAP;
 
-  // Title with gradient fill + glow.
-  const titleText = a.title?.english || a.title?.default || "Unknown";
-  ctx.font = "800 74px PoppinsX";
-  const titleLines = wrapText(ctx, titleText, textMax, 3);
-  for (const line of titleLines) {
-    y += 76;
+  // Title (adaptive size, gradient fill + glow).
+  ctx.font = `800 ${fit.size}px PoppinsX`;
+  for (const line of fit.lines) {
     ctx.save();
-    ctx.shadowColor = rgba(accent, 0.55);
-    ctx.shadowBlur = 28;
-    const tg = ctx.createLinearGradient(x, y - 60, x, y + 6);
+    ctx.shadowColor = rgba(accent, 0.5);
+    ctx.shadowBlur = 26;
+    const tg = ctx.createLinearGradient(x, y, x, y + fit.size);
     tg.addColorStop(0, "#ffffff");
     tg.addColorStop(1, rgba(lighten(accent, 0.55), 1));
     ctx.fillStyle = tg;
     ctx.fillText(line, x, y);
     ctx.restore();
+    y += fit.lineHeight;
   }
 
   // Secondary title (romaji) — always Latin so it renders reliably.
-  const secondary = a.title?.default && a.title.default !== titleText ? a.title.default : null;
   if (secondary) {
-    y += 44;
+    y += SUB_GAP;
     ctx.font = "400 28px PoppinsR";
     ctx.fillStyle = "rgba(255,255,255,0.72)";
-    ctx.fillText(wrapText(ctx, secondary, textMax, 1)[0], x, y);
+    ctx.fillText(wrapLines(ctx, secondary, textMax)[0], x, y);
+    y += SUB_H;
   }
 
   // Score pills.
-  y += 62;
-  let bx = x;
-  const mal = a.ratings?.mal?.score;
-  const imdb = a.ratings?.imdb?.rating;
-  const anilistScore = a.ratings?.anilist?.averageScore;
-  if (mal) bx += pill(ctx, bx, y, `MAL  ${mal}`, accent, { solid: true }) + 14;
-  if (imdb) bx += pill(ctx, bx, y, `IMDb  ${imdb}`, accent) + 14;
-  if (anilistScore) bx += pill(ctx, bx, y, `AniList  ${anilistScore}`, accent) + 14;
-  if (a.episodes) bx += pill(ctx, bx, y, `${a.episodes} eps`, accent) + 14;
+  if (hasPills) {
+    y += PILLS_GAP;
+    let bx = x;
+    if (mal) bx += pill(ctx, bx, y, `MAL  ${mal}`, accent, { solid: true }) + 14;
+    if (imdb) bx += pill(ctx, bx, y, `IMDb  ${imdb}`, accent) + 14;
+    if (anilistScore) bx += pill(ctx, bx, y, `AniList  ${anilistScore}`, accent) + 14;
+    if (a.episodes) bx += pill(ctx, bx, y, `${a.episodes} eps`, accent) + 14;
+    y += PILL_H;
+  }
 
   // Genres.
-  if (a.genres?.length) {
-    y += 66;
+  if (genres.length) {
+    y += GENRE_GAP;
     let gx = x;
-    for (const g of a.genres.slice(0, 4)) {
+    for (const g of genres) {
       const gw = pill(ctx, gx, y, g, accent);
       gx += gw + 12;
       if (gx > textMax) break;
     }
+    y += PILL_H;
   }
 
   // Next release line.
-  const nr = a.expectedNextRelease;
   if (nr) {
-    y += 72;
+    y += NEXT_GAP;
     ctx.font = "600 26px PoppinsS";
     ctx.fillStyle = rgba(lighten(accent, 0.35), 1);
     const label =
